@@ -12,7 +12,7 @@ class PeerToPeer:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.ip, self.port))
         self.socket.listen(5)
-        print(f"Peer listening on {self.ip}:{self.port}")
+        print(f"Escuchando en {self.ip}:{self.port}")
 
         threading.Thread(target=self.accept_connections).start()
 
@@ -20,100 +20,94 @@ class PeerToPeer:
         while True:
             try:
                 client_socket, client_address = self.socket.accept()
-                print(f"Connection from {client_address}")
-                self.lock.acquire()
-                self.peers.append((client_socket, client_address))
-                self.lock.release()
+                print(f"Conexión desde {client_address}")
                 threading.Thread(target=self.handle_client, args=(client_socket, client_address)).start()
             except Exception as e:
-                print(f"Error accepting connection: {e}")
+                print(f"Error aceptando conexión: {e}")
 
     def handle_client(self, client_socket, client_address):
-        while True:
-            try:
+        try:
+            alias = client_socket.recv(1024).decode().strip()
+            print(f"Alias establecido para {client_address}: {alias}")
+            self.lock.acquire()
+            self.peers.append((client_socket, client_address, alias))
+            self.lock.release()
+            self.broadcast_message(f"{alias} se ha unido al chat!", sender_address=client_address)
+
+            while True:
                 data = client_socket.recv(1024)
                 if not data:
                     break
-                print(f"Received: {data.decode()}")
-                self.broadcast_message(data, client_address)
-            except Exception as e:
-                print(f"Error: {e}")
-                break
-        
-        print(f"Client {client_address} disconnected")
-        client_socket.close()
-        self.lock.acquire()
-        self.peers = [(sock, addr) for sock, addr in self.peers if sock != client_socket]
-        self.lock.release()
-        self.broadcast_message(f"Client {client_address} disconnected", client_address)
+                mensaje = data.decode().strip()
+                print(f"Recibido de {alias}: {mensaje}")
+                self.broadcast_message(mensaje, sender_address=client_address)
 
-    def connect_to_peer(self, peer_ip, peer_port):
+        except Exception as e:
+            print(f"Error manejando cliente {client_address}: {e}")
+
+        finally:
+            alias = [peer[2] for peer in self.peers if peer[1] == client_address][0]
+            print(f"{alias} se ha desconectado")
+            self.lock.acquire()
+            self.peers = [(sock, addr, alias) for sock, addr, alias in self.peers if sock != client_socket]
+            self.lock.release()
+            self.broadcast_message(f"{alias} se ha desconectado")
+
+    def broadcast_message(self, mensaje, sender_address=None):
+        for _, addr, alias in self.peers:
+            if addr != sender_address:
+                self.send_to_peer(_, f"{alias}: {mensaje}")
+
+    def send_to_peer(self, address, mensaje):
         try:
             peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            peer_socket.connect((peer_ip, peer_port))
-            print(f"Connected to {peer_ip}:{peer_port}")
-            self.lock.acquire()
-            self.peers.append((peer_socket, (peer_ip, peer_port)))
-            self.lock.release()
-            threading.Thread(target=self.handle_client, args=(peer_socket, (peer_ip, peer_port))).start()
-            return peer_socket
+            peer_socket.connect(address)
+            peer_socket.sendall(mensaje.encode())
+            peer_socket.close()
         except Exception as e:
-            print(f"Connection failed: {e}")
-            return None
+            print(f"Fallo al enviar mensaje a {address}: {e}")
 
-    def send_to_peer(self, peer_socket, message):
-        try:
-            peer_socket.sendall(message.encode())
-            print(f"Sent to peer {peer_socket.getpeername()}: {message}")
-        except Exception as e:
-            print(f"Failed to send to peer {peer_socket.getpeername()}: {e}")
-
-    def broadcast_message(self, message, sender_address):
-        for _, addr in self.peers:
-            if addr != sender_address:
-                self.send_to_peer(_, message)
-
-    def show_connected_peers(self):
+    def mostrar_clientes_conectados(self):
         if not self.peers:
-            print("No peers available.")
+            print("No hay clientes disponibles.")
             return
 
-        print("Connected peers:")
-        for i, (_, address) in enumerate(self.peers):
-            print(f"{i}: {address}")
+        print("Clientes conectados:")
+        for i, (_, address, alias) in enumerate(self.peers):
+            print(f"{i}: {address} - Alias: {alias}")
 
-    def send_message_to_peer(self):
+    def enviar_mensaje_a_cliente(self):
         if not self.peers:
-            print("No peers available.")
+            print("No hay clientes disponibles.")
             return
 
-        self.show_connected_peers()
+        self.mostrar_clientes_conectados()
 
         try:
-            peer_index_str = input("Enter the index of the peer you want to send the message to: ").strip()
-            peer_index = int(peer_index_str)
-            if 0 <= peer_index < len(self.peers):
-                peer_socket, _ = self.peers[peer_index]
+            indice_cliente_str = input("Ingrese el índice del cliente al que desea enviar el mensaje: ").strip()
+            indice_cliente = int(indice_cliente_str)
+            if 0 <= indice_cliente < len(self.peers):
+                peer_socket, _, _ = self.peers[indice_cliente]
                 while True:
-                    message = input("Enter the message you want to send: ")
-                    self.send_to_peer(peer_socket, message)
-                    continue_sending = input("Do you want to send more messages? (y/n): ").strip().lower()
-                    if continue_sending != 'y':
+                    mensaje = input("Ingrese el mensaje que desea enviar: ")
+                    self.send_to_peer(peer_socket, mensaje)
+                    continuar_enviando = input("¿Desea enviar más mensajes? (s/n): ").strip().lower()
+                    if continuar_enviando != 's':
                         break
             else:
-                print("Invalid peer index")
+                print("Índice de cliente no válido")
         except ValueError:
-            print("Invalid input. Please enter a valid index.")
+            print("Entrada no válida. Por favor ingrese un índice válido.")
 
 if __name__ == "__main__":
     peer = PeerToPeer("192.168.2.139", 8888)
     peer.start()
     
     peer.connect_to_peer("192.168.2.140", 8889)
-    peer.connect_to_peer("192.168.2.141", 8890)
+    peer.connect_to_peer("192.168.2.138", 8887)
     
     while True:
-        peer.send_message_to_peer()
-        continue_sending = input("Do you want to send more messages? (y/n): ").strip().lower()
-        if continue_sending != 'y':
+        peer.enviar_mensaje_a_cliente()
+        continuar_enviando = input("¿Desea enviar más mensajes? (s/n): ").strip().lower()
+        if continuar_enviando != 's':
             break
