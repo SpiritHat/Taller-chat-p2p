@@ -1,119 +1,100 @@
-#—---------codigo para buscar—-----------------
+import socket
+import threading
 
-import socket 
-import threading  
+# Lista para almacenar las direcciones IP de los clientes conectados
+connected_clients = []
 
-class PeerToPeer:
-    def __init__(self, port):
-        self.ip = '0.0.0.0'  # Escuchar en todas las interfaces disponibles
-        self.port = port
-        self.peers = []
-        self.lock = threading.Lock()
-        self.next_peer_port = 9000  # Puerto inicial para asignar a los nuevos clientes
-
-    def start(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind((self.ip, self.port))
-        self.socket.listen(5)
-        print(f"Peer escuchando en {self.ip}:{self.port}")
-
-        threading.Thread(target=self.accept_connections).start()
-
-    def accept_connections(self):
-        while True:
-            try:
-                client_socket, client_address = self.socket.accept()
-                print(f"Conexión desde {client_address}")
-                self.lock.acquire()
-                self.peers.append((client_socket, client_address))
-                self.lock.release()
-                threading.Thread(target=self.handle_client, args=(client_socket, client_address)).start()
-            except Exception as e:
-                print(f"Error al aceptar la conexión: {e}")
-
-    def handle_client(self, client_socket, client_address):
-        while True:
-            try:
-                data = client_socket.recv(1024)
-                if not data:
-                    break
-                print(f"Recibido: {data.decode()}")
-                self.broadcast_message(data, client_address)
-            except Exception as e:
-                print(f"Error: {e}")
-                break
-        
-        print(f"Cliente {client_address} desconectado")
-        client_socket.close()
-        self.lock.acquire()
-        self.peers = [(sock, addr) for sock, addr in self.peers if sock != client_socket]
-        self.lock.release()
-        self.broadcast_message(f"Cliente {client_address} desconectado", client_address)
-
-    def connect_to_peer(self, peer_ip, peer_port):
-        try:
-            peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            peer_socket.connect((peer_ip, peer_port))
-            print(f"Conectado a {peer_ip}:{peer_port}")
-            self.lock.acquire()
-            self.peers.append((peer_socket, (peer_ip, peer_port)))
-            self.lock.release()
-            threading.Thread(target=self.handle_client, args=(peer_socket, (peer_ip, peer_port))).start()
-            return peer_socket
-        except Exception as e:
-            print(f"Fallo al conectar: {e}")
-            return None
-
-    def send_to_peer(self, peer_socket, message):
-        try:
-            peer_socket.sendall(message.encode())
-            print(f"Enviado a peer {peer_socket.getpeername()}: {message}")
-        except Exception as e:
-            print(f"Fallo al enviar a peer {peer_socket.getpeername()}: {e}")
-
-    def broadcast_message(self, message, sender_address):
-        for _, addr in self.peers:
-            if addr != sender_address:
-                self.send_to_peer(_, message)
-
-    def show_connected_peers(self):
-        if not self.peers:
-            print("No hay compañeros disponibles.")
-            return
-
-        print("Compañeros conectados:")
-        for i, (_, address) in enumerate(self.peers):
-            print(f"{i}: {address}")
-        print(f"{len(self.peers)}: Desconectarse")
-
-    def send_message_to_peer(self):
-        if not self.peers:
-            print("No hay compañeros disponibles.")
-            return
-
-        self.show_connected_peers()
-
-        try:
-            peer_index_str = input("Seleccione con qué compañero desea conversar o si desea desconectarse: ").strip()
-            peer_index = int(peer_index_str)
-            if 0 <= peer_index < len(self.peers):
-                peer_socket, _ = self.peers[peer_index]
-                while True:
-                    message = input("Ingrese el mensaje que desea enviar ('exit' para salir): ")
-                    if message.lower() == "exit":
-                        break
-                    self.send_to_peer(peer_socket, message)
-            elif peer_index == len(self.peers):
-                print("Desconectándose...")
-                exit()
-            else:
-                print("Índice de compañero no válido")
-        except ValueError:
-            print("Entrada no válida. Por favor, ingrese un índice válido.")
-
-if __name__ == "__main__":
-    peer = PeerToPeer(8888)
-    peer.start()
+# Función para manejar las conexiones de los clientes
+def handle_client(client_socket, addr):
+    print(f"Conexión establecida desde {addr}")
+    
+    # Agregar la dirección IP del cliente a la lista de clientes conectados
+    connected_clients.append(addr)
     
     while True:
-        peer.send_message_to_peer()
+        # Recibir datos del cliente
+        data = client_socket.recv(1024)
+        if not data:
+            break
+        
+        print(f"Mensaje recibido de {addr}: {data.decode('utf-8')}")
+        
+        # Responder al cliente
+        response = input("Responder: ")
+        client_socket.send(response.encode('utf-8'))
+    
+    # Cuando el cliente se desconecta, eliminar su dirección IP de la lista
+    connected_clients.remove(addr)
+    print(f"Cliente {addr} desconectado.")
+    client_socket.close()
+
+# Función para manejar las conexiones de los servidores
+def handle_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((host, port))
+    server.listen(5)
+    
+    print(f"Servidor iniciado en {host}:{port}")
+    
+    while True:
+        client_socket, addr = server.accept()
+        
+        # Iniciar un hilo para manejar al cliente
+        client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
+        client_handler.start()
+
+        # Imprimir la lista de clientes conectados
+        print("Clientes conectados:", connected_clients)
+
+# Función para escanear direcciones IP en un rango de puertos y determinar cuáles están disponibles
+def scan_ips(start_ip, end_ip):
+    available_ips = []
+    for ip in range(start_ip, end_ip + 1):
+        test_ip = f"{host_prefix}{ip}"
+        try:
+            socket.create_connection((test_ip, port), timeout=1)
+        except socket.error:
+            available_ips.append(test_ip)
+    return available_ips
+
+# Configuración básica del servidor
+host_prefix = '192.168.2.'  # Cambiar según la red local
+start_ip = 130
+end_ip = 150
+port = 9999
+
+# Escanear las direcciones IP disponibles en el rango especificado
+available_ips = scan_ips(start_ip, end_ip)
+if not available_ips:
+    print("No hay direcciones IP disponibles en el rango especificado.")
+    exit()
+
+print("Direcciones IP disponibles:")
+for ip in available_ips:
+    print(ip)
+
+# Solicitar al usuario que ingrese una dirección IP
+desired_ip = input("Ingrese la dirección IP deseada: ")
+if desired_ip not in available_ips:
+    print("La dirección IP ingresada no está disponible.")
+    exit()
+
+host = desired_ip
+
+# Iniciar un hilo para manejar conexiones entrantes
+server_thread = threading.Thread(target=handle_server)
+server_thread.daemon = True
+server_thread.start()
+
+# Iniciar el cliente
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client.connect((host, port))
+
+while True:
+    # Enviar mensaje al servidor
+    message = input("Mensaje para el servidor: ")
+    client.send(message.encode('utf-8'))
+    
+    # Recibir respuesta del servidor
+    response = client.recv(1024)
+    print("Respuesta del servidor:", response.decode('utf-8'))
