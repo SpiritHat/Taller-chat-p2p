@@ -1,113 +1,85 @@
-import socket 
-import threading  
+import socket
+import threading
+import time
 
-class PeerToPeer:
-    def __init__(self, ip, port):
-        self.ip = ip
-        self.port = port
-        self.peers = []
-        self.lock = threading.Lock()
+# Constantes
+UDP_PORT = 5001
+DISCOVERY_SERVER = ("localhost", 5000)
+MESSAGE_INTERVAL = 5
+MESSAGE = b"Hola desde Copilot"
 
-    def start(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind((self.ip, self.port))
-        self.socket.listen(5)
-        print(f"Escuchando en {self.ip}:{self.port}")
+# Lista para guardar las direcciones de los otros nodos
+peers = []
 
-        threading.Thread(target=self.accept_connections).start()
+# Función para crear un socket UDP con el flag SO_REUSEPORT
+def create_socket():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.bind(("", UDP_PORT))
+    return sock
 
-    def accept_connections(self):
-        while True:
-            try:
-                client_socket, client_address = self.socket.accept()
-                print(f"Conexión desde {client_address}")
-                threading.Thread(target=self.handle_client, args=(client_socket, client_address)).start()
-            except Exception as e:
-                print(f"Error aceptando conexión: {e}")
+# Función para enviar un mensaje UDP a una dirección
+def send_message(sock, message, address):
+    try:
+        sock.sendto(message, address)
+        print(f"Mensaje enviado a {address}")
+    except OSError as e:
+        print(f"Error al enviar mensaje a {address}: {e}")
 
-    def handle_client(self, client_socket, client_address):
+# Función para escuchar mensajes UDP y responder
+def listen(sock):
+    while True:
         try:
-            alias = client_socket.recv(1024).decode().strip()
-            print(f"Alias establecido para {client_address}: {alias}")
-            self.lock.acquire()
-            self.peers.append((client_socket, client_address, alias))
-            self.lock.release()
-            self.broadcast_message(f"{alias} se ha unido al chat!", sender_address=client_address)
+            data, address = sock.recvfrom(1024)
+            print(f"Mensaje recibido de {address}: {data}")
+            if data == b"DISCOVER": 
+                send_message(sock, b"ACK", address)
+            elif data == b"ACK": 
+                if address not in peers:
+                    peers.append(address)
+                    print(f"Pare agregado: {address}")
+            else: 
+                send_message(sock, data, address)
+        except OSError as e:
+            print(f"Error al recibir datos: {e}")
 
-            while True:
-                data = client_socket.recv(1024)
-                if not data:
-                    break
-                mensaje = data.decode().strip()
-                print(f"Recibido de {alias}: {mensaje}")
-                self.broadcast_message(mensaje, sender_address=client_address)
+# Función para enviar mensajes UDP periódicamente a los pares
+def send(sock):
+    while True:
+        for peer in peers:
+            send_message(sock, MESSAGE, peer)
+        time.sleep(MESSAGE_INTERVAL)
 
-        except Exception as e:
-            print(f"Error manejando cliente {client_address}: {e}")
+# Función para descubrir otros nodos usando el servidor de descubrimiento
+def discover(sock):
+    send_message(sock, b"DISCOVER", DISCOVERY_SERVER)
+    while True:
+        data, address = sock.recvfrom(1024)
+        if data.startswith(b"PEER"):
+            peer = data[5:].decode().split(":")
+            peer_address = (peer[0], int(peer[1]))
+            if peer_address != (socket.gethostbyname(socket.gethostname()), UDP_PORT):
+                send_message(sock, b"DISCOVER", peer_address)
 
-        finally:
-            alias = [peer[2] for peer in self.peers if peer[1] == client_address][0]
-            print(f"{alias} se ha desconectado")
-            self.lock.acquire()
-            self.peers = [(sock, addr, alias) for sock, addr, alias in self.peers if sock != client_socket]
-            self.lock.release()
-            self.broadcast_message(f"{alias} se ha desconectado")
+# Crear y empezar hilos
+def start_threads():
+    sock = create_socket()
+    listen_thread = threading.Thread(target=listen, args=(sock,))
+    send_thread = threading.Thread(target=send, args=(sock,))
+    discover_thread = threading.Thread(target=discover, args=(sock,))
+    
+    listen_thread.daemon = True
+    send_thread.daemon = True
+    discover_thread.daemon = True
+    
+    listen_thread.start()
+    send_thread.start()
+    discover_thread.start()
 
-    def broadcast_message(self, mensaje, sender_address=None):
-        for _, addr, alias in self.peers:
-            if addr != sender_address:
-                self.send_to_peer(_, f"{alias}: {mensaje}")
-
-    def send_to_peer(self, address, mensaje):
-        try:
-            peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            peer_socket.connect(address)
-            peer_socket.sendall(mensaje.encode())
-            peer_socket.close()
-        except Exception as e:
-            print(f"Fallo al enviar mensaje a {address}: {e}")
-
-    def mostrar_clientes_conectados(self):
-        if not self.peers:
-            print("No hay clientes disponibles.")
-            return
-
-        print("Clientes conectados:")
-        for i, (_, address, alias) in enumerate(self.peers):
-            print(f"{i}: {address} - Alias: {alias}")
-
-    def enviar_mensaje_a_cliente(self):
-        if not self.peers:
-            print("No hay clientes disponibles.")
-            return
-
-        self.mostrar_clientes_conectados()
-
-        try:
-            indice_cliente_str = input("Ingrese el índice del cliente al que desea enviar el mensaje: ").strip()
-            indice_cliente = int(indice_cliente_str)
-            if 0 <= indice_cliente < len(self.peers):
-                peer_socket, _, _ = self.peers[indice_cliente]
-                while True:
-                    mensaje = input("Ingrese el mensaje que desea enviar: ")
-                    self.send_to_peer(peer_socket, mensaje)
-                    continuar_enviando = input("¿Desea enviar más mensajes? (s/n): ").strip().lower()
-                    if continuar_enviando != 's':
-                        break
-            else:
-                print("Índice de cliente no válido")
-        except ValueError:
-            print("Entrada no válida. Por favor ingrese un índice válido.")
+    listen_thread.join()
+    send_thread.join()
+    discover_thread.join()
 
 if __name__ == "__main__":
-    peer = PeerToPeer("192.168.2.139", 8888)
-    peer.start()
-    
-    peer.connect_to_peer("192.168.2.140", 8889)
-    peer.connect_to_peer("192.168.2.138", 8887)
-    
-    while True:
-        peer.enviar_mensaje_a_cliente()
-        continuar_enviando = input("¿Desea enviar más mensajes? (s/n): ").strip().lower()
-        if continuar_enviando != 's':
-            break
+    start_threads()
