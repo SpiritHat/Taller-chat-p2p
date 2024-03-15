@@ -1,3 +1,4 @@
+# Importa las librerias necesarias para el funcionamiento
 import socket
 import threading
 
