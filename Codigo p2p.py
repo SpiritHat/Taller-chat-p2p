@@ -30,8 +30,7 @@ class Client:
 
     def handle_client(self, client_socket):
         client_ip = client_socket.getpeername()[0]
-        print(f"Conexión entrante desde {client_ip}")
-        client_socket.sendall(f"IP del cliente: {client_ip}".encode())
+        print(f"Conexión establecida con el cliente en {client_ip}")
         self.connected_clients.append((client_ip, client_socket))
 
         while True:
@@ -40,13 +39,13 @@ class Client:
                 if message.lower() == 'exit':
                     break
                 else:
-                    print(f"Mensaje recibido: {message}")
+                    print(f"Mensaje recibido de {client_ip}: {message}")
             except Exception as e:
-                print(f"Error al recibir mensaje del cliente: {e}")
+                print(f"Error al recibir mensaje del cliente {client_ip}: {e}")
                 break
 
     def show_available_clients(self):
-        while True:
+        while not self.shutdown_flag:
             print("Buscando clientes disponibles en la red...")
             available_clients = []
             for i in range(135, 142):
@@ -56,20 +55,19 @@ class Client:
                     client_socket.settimeout(0.5)
                     client_socket.connect((ip, self.port))
                     print(f"Cliente disponible: {ip}")
-                    available_clients.append(ip)
-                    client_socket.close()
+                    available_clients.append((ip, client_socket))
                 except Exception as e:
                     pass
 
             if available_clients:
                 print("Clientes disponibles:")
-                for idx, ip in enumerate(available_clients, start=1):
+                for idx, (ip, _) in enumerate(available_clients, start=1):
                     print(f"{idx}. {ip}")
 
                 while True:
                     try:
                         choice = int(input("Ingrese el número del cliente al que desea conectarse: "))
-                        chosen_ip = available_clients[choice - 1]
+                        chosen_ip, chosen_socket = available_clients[choice - 1]
                         if chosen_ip in [client[0] for client in self.connected_clients]:
                             response = input("Ya está conectado a este cliente. ¿Desea conectar otro? (s/n): ")
                             if response.lower() == 's':
@@ -79,7 +77,7 @@ class Client:
                                 return
                         else:
                             print(f"Conectando al cliente en {chosen_ip}")
-                            self.connect_to_client(chosen_ip)
+                            self.connect_to_client(chosen_ip, chosen_socket)
                             break
                     except (ValueError, IndexError):
                         print("Opción inválida.")
@@ -89,11 +87,9 @@ class Client:
                 break
 
         self.show_connected_clients()
-        
-    def connect_to_client(self, ip):
+    
+    def connect_to_client(self, ip, client_socket):
         try:
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_socket.connect((ip, self.port))
             print(f"Conexión establecida con el cliente en {ip}")
             self.connected_clients.append((ip, client_socket))
         except Exception as e:
