@@ -1,85 +1,93 @@
 import socket
 import threading
-import time
 
-# Constantes
-UDP_PORT = 5001
-DISCOVERY_SERVER = ("localhost", 5000)
-MESSAGE_INTERVAL = 5
-MESSAGE = b"Hola desde Copilot"
+# Función para manejar la comunicación con un cliente específico
+def handle_client(client_socket, client_address):
+    print(f"Conexión establecida con {client_address}")
 
-# Lista para guardar las direcciones de los otros nodos
-peers = []
-
-# Función para crear un socket UDP con el flag SO_REUSEPORT
-def create_socket():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    sock.bind(("", UDP_PORT))
-    return sock
-
-# Función para enviar un mensaje UDP a una dirección
-def send_message(sock, message, address):
-    try:
-        sock.sendto(message, address)
-        print(f"Mensaje enviado a {address}")
-    except OSError as e:
-        print(f"Error al enviar mensaje a {address}: {e}")
-
-# Función para escuchar mensajes UDP y responder
-def listen(sock):
     while True:
         try:
-            data, address = sock.recvfrom(1024)
-            print(f"Mensaje recibido de {address}: {data}")
-            if data == b"DISCOVER": 
-                send_message(sock, b"ACK", address)
-            elif data == b"ACK": 
-                if address not in peers:
-                    peers.append(address)
-                    print(f"Pare agregado: {address}")
-            else: 
-                send_message(sock, data, address)
-        except OSError as e:
-            print(f"Error al recibir datos: {e}")
+            # Recibir mensaje del cliente
+            data = client_socket.recv(1024).decode("utf-8")
+            if not data:
+                break
+            print(f"Mensaje recibido de {client_address}: {data}")
 
-# Función para enviar mensajes UDP periódicamente a los pares
-def send(sock):
+            # Reenviar mensaje a todos los clientes conectados
+            broadcast(data, client_socket)
+        except ConnectionResetError:
+            break
+
+    print(f"Conexión cerrada con {client_address}")
+    client_socket.close()
+
+# Función para reenviar mensajes a todos los clientes excepto al remitente
+def broadcast(message, sender_socket):
+    for client in clients:
+        client_socket, _ = client
+        if client_socket != sender_socket:
+            try:
+                client_socket.send(message.encode("utf-8"))
+            except ConnectionResetError:
+                clients.remove(client)
+
+# Configuración del servidor/cliente
+HOST = '0.0.0.0'  # Escuchar en todas las interfaces de red
+PORT = 872
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind((HOST, PORT))
+server.listen(5)
+
+print(f"Servidor/Cliente escuchando en el puerto {PORT}...")
+
+clients = []
+
+# Manejo de conexiones entrantes
+def accept_connections():
     while True:
-        for peer in peers:
-            send_message(sock, MESSAGE, peer)
-        time.sleep(MESSAGE_INTERVAL)
+        client_socket, client_address = server.accept()
 
-# Función para descubrir otros nodos usando el servidor de descubrimiento
-def discover(sock):
-    send_message(sock, b"DISCOVER", DISCOVERY_SERVER)
+        # Verificar si la dirección IP está dentro del rango especificado
+        ip_prefix = '192.168.2.'
+        if client_address[0].startswith(ip_prefix):
+            clients.append((client_socket, client_address))
+
+            # Mostrar las conexiones disponibles
+            print("Conexiones disponibles:")
+            for idx, (_, addr) in enumerate(clients):
+                print(f"{idx}: {addr}")
+
+            # Crear un hilo para manejar la comunicación con el nuevo cliente
+            client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
+            client_thread.start()
+        else:
+            print(f"Conexión desde {client_address} rechazada: Fuera del rango permitido.")
+
+# Iniciar un hilo para manejar conexiones entrantes
+accept_thread = threading.Thread(target=accept_connections)
+accept_thread.start()
+
+# Función para enviar mensajes a una dirección IP específica
+def send_message():
     while True:
-        data, address = sock.recvfrom(1024)
-        if data.startswith(b"PEER"):
-            peer = data[5:].decode().split(":")
-            peer_address = (peer[0], int(peer[1]))
-            if peer_address != (socket.gethostbyname(socket.gethostname()), UDP_PORT):
-                send_message(sock, b"DISCOVER", peer_address)
+        try:
+            if not clients:
+                print("No hay clientes conectados.")
+                break
 
-# Crear y empezar hilos
-def start_threads():
-    sock = create_socket()
-    listen_thread = threading.Thread(target=listen, args=(sock,))
-    send_thread = threading.Thread(target=send, args=(sock,))
-    discover_thread = threading.Thread(target=discover, args=(sock,))
-    
-    listen_thread.daemon = True
-    send_thread.daemon = True
-    discover_thread.daemon = True
-    
-    listen_thread.start()
-    send_thread.start()
-    discover_thread.start()
+            idx = int(input("Seleccione el índice de la conexión a la que desea enviar el mensaje: "))
+            if 0 <= idx < len(clients):
+                message = input("Ingrese el mensaje que desea enviar: ")
+                if message.lower() == "exit":
+                    break
+                client_socket, _ = clients[idx]
+                client_socket.send(message.encode("utf-8"))
+            else:
+                print("Índice fuera de rango.")
+        except ValueError:
+            print("Por favor, ingrese un número válido.")
 
-    listen_thread.join()
-    send_thread.join()
-    discover_thread.join()
-
-if __name__ == "__main__":
-    start_threads()
+# Iniciar un hilo para enviar mensajes
+send_thread = threading.Thread(target=send_message)
+send_thread.start()
