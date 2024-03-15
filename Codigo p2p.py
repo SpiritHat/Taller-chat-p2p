@@ -17,7 +17,7 @@ class Client:
     def start_server(self):
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.bind(("192.168.2.140", self.port))
+            self.server_socket.bind(("192.168.2.139", self.port))
             self.server_socket.listen(5)
             print(f"Servidor escuchando en el puerto {self.port}")
 
@@ -87,7 +87,7 @@ class Client:
                 break
 
         self.show_connected_clients()
-    
+
     def connect_to_client(self, ip, client_socket):
         try:
             print(f"Conexión establecida con el cliente en {ip}")
