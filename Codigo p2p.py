@@ -1,100 +1,148 @@
 import socket
 import threading
 
-# Lista para almacenar las direcciones IP de los clientes conectados
-connected_clients = []
+class Client:
+    def __init__(self, port):
+        self.port = port
+        self.connected_clients = []
+        self.server_socket = None
+        self.shutdown_flag = False
+        self.server_thread = None
 
-# Función para manejar las conexiones de los clientes
-def handle_client(client_socket, addr):
-    print(f"Conexión establecida desde {addr}")
-    
-    # Agregar la dirección IP del cliente a la lista de clientes conectados
-    connected_clients.append(addr)
-    
-    while True:
-        # Recibir datos del cliente
-        data = client_socket.recv(1024)
-        if not data:
-            break
-        
-        print(f"Mensaje recibido de {addr}: {data.decode('utf-8')}")
-        
-        # Responder al cliente
-        response = input("Responder: ")
-        client_socket.send(response.encode('utf-8'))
-    
-    # Cuando el cliente se desconecta, eliminar su dirección IP de la lista
-    connected_clients.remove(addr)
-    print(f"Cliente {addr} desconectado.")
-    client_socket.close()
+    def start(self):
+        self.server_thread = threading.Thread(target=self.start_server)
+        self.server_thread.start()
+        self.show_available_clients()
 
-# Función para manejar las conexiones de los servidores
-def handle_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(5)
-    
-    print(f"Servidor iniciado en {host}:{port}")
-    
-    while True:
-        client_socket, addr = server.accept()
-        
-        # Iniciar un hilo para manejar al cliente
-        client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
-        client_handler.start()
-
-        # Imprimir la lista de clientes conectados
-        print("Clientes conectados:", connected_clients)
-
-# Función para escanear direcciones IP en un rango de puertos y determinar cuáles están disponibles
-def scan_ips(start_ip, end_ip):
-    available_ips = []
-    for ip in range(start_ip, end_ip + 1):
-        test_ip = f"{host_prefix}{ip}"
+    def start_server(self):
         try:
-            socket.create_connection((test_ip, port), timeout=1)
-        except socket.error:
-            available_ips.append(test_ip)
-    return available_ips
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.bind(("192.168.2.140", self.port))
+            self.server_socket.listen(5)
+            print(f"Servidor escuchando en el puerto {self.port}")
 
-# Configuración básica del servidor
-host_prefix = '192.168.2.'  # Cambiar según la red local
-start_ip = 130
-end_ip = 150
-port = 9999
+            while not self.shutdown_flag:
+                client_socket, client_address = self.server_socket.accept()
+                print(f"Conexión entrante desde {client_address}")
+                threading.Thread(target=self.handle_client, args=(client_socket,)).start()
+        except Exception as e:
+            print(f"Error al iniciar el servidor: {e}")
 
-# Escanear las direcciones IP disponibles en el rango especificado
-available_ips = scan_ips(start_ip, end_ip)
-if not available_ips:
-    print("No hay direcciones IP disponibles en el rango especificado.")
-    exit()
+    def handle_client(self, client_socket):
+        client_ip = client_socket.getpeername()[0]
+        print(f"Conexión entrante desde {client_ip}")
+        client_socket.sendall(f"IP del cliente: {client_ip}".encode())
+        self.connected_clients.append((client_ip, client_socket))
 
-print("Direcciones IP disponibles:")
-for ip in available_ips:
-    print(ip)
+        while True:
+            try:
+                message = client_socket.recv(1024).decode()
+                if message.lower() == 'exit':
+                    break
+                else:
+                    print(f"Mensaje recibido: {message}")
+            except Exception as e:
+                print(f"Error al recibir mensaje del cliente: {e}")
+                break
 
-# Solicitar al usuario que ingrese una dirección IP
-desired_ip = input("Ingrese la dirección IP deseada: ")
-if desired_ip not in available_ips:
-    print("La dirección IP ingresada no está disponible.")
-    exit()
+    def show_available_clients(self):
+        while True:
+            print("Buscando clientes disponibles en la red...")
+            available_clients = []
+            for i in range(135, 142):
+                ip = f"192.168.2.{i}"
+                try:
+                    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    client_socket.settimeout(0.5)
+                    client_socket.connect((ip, self.port))
+                    print(f"Cliente disponible: {ip}")
+                    available_clients.append(ip)
+                    client_socket.close()
+                except Exception as e:
+                    pass
 
-host = desired_ip
+            if available_clients:
+                print("Clientes disponibles:")
+                for idx, ip in enumerate(available_clients, start=1):
+                    print(f"{idx}. {ip}")
 
-# Iniciar un hilo para manejar conexiones entrantes
-server_thread = threading.Thread(target=handle_server)
-server_thread.daemon = True
-server_thread.start()
+                while True:
+                    try:
+                        choice = int(input("Ingrese el número del cliente al que desea conectarse: "))
+                        chosen_ip = available_clients[choice - 1]
+                        if chosen_ip in [client[0] for client in self.connected_clients]:
+                            response = input("Ya está conectado a este cliente. ¿Desea conectar otro? (s/n): ")
+                            if response.lower() == 's':
+                                break
+                            else:
+                                self.show_connected_clients()
+                                return
+                        else:
+                            print(f"Conectando al cliente en {chosen_ip}")
+                            self.connect_to_client(chosen_ip)
+                            break
+                    except (ValueError, IndexError):
+                        print("Opción inválida.")
 
-# Iniciar el cliente
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((host, port))
+            else:
+                print("No se encontraron clientes disponibles en la red.")
+                break
 
-while True:
-    # Enviar mensaje al servidor
-    message = input("Mensaje para el servidor: ")
-    client.send(message.encode('utf-8'))
-    
-    # Recibir respuesta del servidor
-    response = client.recv(1024)
-    print("Respuesta del servidor:", response.decode('utf-8'))
+        self.show_connected_clients()
+        
+    def connect_to_client(self, ip):
+        try:
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect((ip, self.port))
+            print(f"Conexión establecida con el cliente en {ip}")
+            self.connected_clients.append((ip, client_socket))
+        except Exception as e:
+            print(f"Error al conectarse al cliente: {e}")
+
+    def show_connected_clients(self):
+        print("Clientes conectados:")
+        for idx, (ip, _) in enumerate(self.connected_clients, start=1):
+            print(f"{idx}. {ip}")
+        print("0. Desconectar servidor")
+
+        while True:
+            try:
+                choice = int(input("Con qué cliente desea hablar (ingrese el número) o '0' para salir: "))
+                if choice == 0:
+                    self.shutdown_server()
+                    return
+                elif 1 <= choice <= len(self.connected_clients):
+                    client_ip, client_socket = self.connected_clients[choice - 1]
+                    print(f"Conversando con {client_ip}")
+                    self.send_message(client_socket)
+                    break
+                else:
+                    print("Opción inválida.")
+            except ValueError:
+                print("Opción inválida.")
+
+    def send_message(self, client_socket):
+        while True:
+            message = input("Ingrese el mensaje que desea enviar (escriba 'exit' para salir): ")
+            if message.lower() == 'exit':
+                client_socket.sendall(message.encode())
+                break
+            else:
+                client_socket.sendall(message.encode())
+
+    def shutdown_server(self):
+        print("Apagando el servidor...")
+        self.shutdown_flag = True
+        if self.server_socket:
+            self.server_socket.close()
+        for _, client_socket in self.connected_clients:
+            try:
+                client_socket.close()
+            except:
+                pass
+        exit()
+
+
+if __name__ == "__main__":
+    client = Client(8888)
+    client.start()
